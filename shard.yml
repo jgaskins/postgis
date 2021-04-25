@@ -1,0 +1,13 @@
+name: postgis
+version: 0.1.0
+
+authors:
+  - Jamie Gaskins <jgaskins@gmail.com>
+
+dependencies:
+  pg:
+    github: will/crystal-pg
+
+crystal: 1.0.0-dev
+
+license: MIT
