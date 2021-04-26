@@ -2,7 +2,7 @@ name: postgis
 version: 0.1.0
 
 authors:
-  - Jamie Gaskins <jgaskins@gmail.com>
+  - Jamie Gaskins <jgaskins@hey.com>
 
 dependencies:
   pg:
