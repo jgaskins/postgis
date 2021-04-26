@@ -8,6 +8,6 @@ dependencies:
   pg:
     github: will/crystal-pg
 
-crystal: >= 0.36, < 2.0.0
+crystal: ">= 0.36, < 2.0.0"
 
 license: MIT
