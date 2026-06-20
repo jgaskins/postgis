@@ -7,7 +7,15 @@ module PostGIS
   def self.register_decoder(db : DB::Database)
     if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geography'", as: Int32)
       ::PG::Decoders.register_decoder Decoders::GeographyDecoder.new([oid])
+    else
+      raise MissingExtension.new("No `geography` type available in Postgres. The `postgis` extension might not be installed.")
     end
+  end
+
+  class Error < ::Exception
+  end
+
+  class MissingExtension < Error
   end
 
   abstract struct Geography
