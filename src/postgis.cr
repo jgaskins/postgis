@@ -12,12 +12,6 @@ module PostGIS
     end
   end
 
-  class Error < ::Exception
-  end
-
-  class MissingExtension < Error
-  end
-
   abstract struct Geography
     def self.from_ewkb(io : IO, endian : IO::ByteFormat)
       # TODO: Come up with a better way to distinguish this. Maybe generics?
@@ -96,6 +90,9 @@ module PostGIS
   end
 
   class DecodingError < Error
+  end
+
+  class MissingExtension < Error
   end
 
   module Decoders
