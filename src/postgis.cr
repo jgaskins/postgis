@@ -4,6 +4,12 @@ require "db"
 require "./version"
 
 module PostGIS
+  def self.register_decoder(db : DB::Database)
+    if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geography'", as: Int32)
+      ::PG::Decoders.register_decoder Decoders::GeographyDecoder.new([oid])
+    end
+  end
+
   abstract struct Geography
     def self.from_ewkb(io : IO, endian : IO::ByteFormat)
       # TODO: Come up with a better way to distinguish this. Maybe generics?
@@ -88,9 +94,10 @@ module PostGIS
     struct GeographyDecoder
       include PG::Decoders::Decoder
 
-      def_oids [
-        17056,
-      ]
+      getter oids : Array(Int32)
+
+      def initialize(@oids)
+      end
 
       def decode(io, bytesize, oid)
         endian = case endian_byte = io.read_byte
@@ -108,8 +115,6 @@ module PostGIS
       def type
         Geography
       end
-
-      PG::Decoders.register_decoder new
     end
   end
 end

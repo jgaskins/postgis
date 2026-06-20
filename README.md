@@ -28,6 +28,13 @@ Load PostGIS into your application
 require "postgis"
 ```
 
+After connecting to your database, run `PostGIS.register_decoder(db)`:
+
+```crystal
+db = DB.open(ENV["DATABASE_URL"])
+PostGIS.register_decoder db
+```
+
 If you're writing raw SQL queries, you can specify the type of the result:
 
 ```crystal
