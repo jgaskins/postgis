@@ -4,39 +4,109 @@ require "db"
 require "./version"
 
 module PostGIS
+  @[Flags]
+  enum TypeFlags : UInt16
+    Z    = 0x8000
+    M    = 0x4000
+    SRID = 0x2000
+    BBOX = 0x1000
+  end
+
+  enum Kind : UInt16
+    Point              = 1
+    LineString         = 2
+    Polygon            = 3
+    MultiPoint         = 4
+    MultiLineString    = 5
+    MultiPolygon       = 6
+    GeometryCollection = 7
+  end
+
   def self.register_decoder(db : DB::Database)
+    oids = [] of Int32
+
     if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geography'", as: Int32)
-      ::PG::Decoders.register_decoder Decoders::GeographyDecoder.new([oid])
+      oids << oid
     else
       raise MissingExtension.new("No `geography` type available in Postgres. The `postgis` extension might not be installed.")
     end
+
+    if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geometry'", as: Int32)
+      oids << oid
+    else
+      raise MissingExtension.new("No `geometry` type available in Postgres. The `postgis` extension might not be installed.")
+    end
+
+    ::PG::Decoders.register_decoder Decoder.new(oids)
   end
 
-  abstract struct Geography
-    def self.from_ewkb(io : IO, endian : IO::ByteFormat)
-      # TODO: Come up with a better way to distinguish this. Maybe generics?
-      # I'm not sure of the best way to do it yet, I was just trying to come up
-      # with something that worked.
-      case type = io.read_bytes UInt32, endian
-      when 0x20000001 then Point2D
-      when 0xA0000001 then Point3D
-      when 0x20000003 then Polygon2D
+  # The common supertype for everything PostGIS hands us. `geometry` and
+  # `geography` can decode from identical EWKB, so they share one
+  # hierarchy.
+  abstract struct Geometry
+    # Reads a complete (E)WKB geometry, including its leading endian byte.
+    private def self.from_ewkb(io : IO) : Geometry
+      endian = read_endian(io)
+      type = io.read_bytes(UInt32, endian)
+      flags = TypeFlags.new((type >> 16).to_u16)
+      srid = flags.srid? ? io.read_bytes(UInt32, endian) : 0_u32
+
+      case Kind.new((type & 0xffff).to_u16)
+      in .point?
+        flags.z? ? Point3D.read_body(io, endian, srid) : Point2D.read_body(io, endian, srid)
+      in .line_string?
+        flags.z? ? read_linestring(io, endian, srid, Point3D) : read_linestring(io, endian, srid, Point2D)
+      in .polygon?
+        flags.z? ? read_polygon(io, endian, srid, Point3D) : read_polygon(io, endian, srid, Point2D)
+      in .multi_polygon?
+        flags.z? ? read_multi_polygon(io, endian, srid, Point3D) : read_multi_polygon(io, endian, srid, Point2D)
+      end
+    end
+
+    private def self.read_endian(io : IO) : IO::ByteFormat
+      case endian_byte = io.read_byte
+      when 0
+        IO::ByteFormat::BigEndian
+      when 1
+        IO::ByteFormat::LittleEndian
       else
-        raise DecodingError.new("Unsupported geography type: #{type.to_s(16)}")
-      end.from_ewkb(io, endian)
+        raise DecodingError.new("Invalid endian byte marker: #{endian_byte.inspect}")
+      end
+    end
+
+    protected def self.read_linestring(io, endian, srid, point : P.class) : LineString(P) forall P
+      LineString(P).new(Array(P).new(io.read_bytes(UInt32, endian)) {
+        P.read_body(io, endian, srid)
+      })
+    end
+
+    protected def self.read_polygon(io, endian, srid, point : P.class) : Polygon(P) forall P
+      Polygon(P).new(Array(Array(P)).new(io.read_bytes(UInt32, endian)) {
+        Array(P).new(io.read_bytes(UInt32, endian)) { P.read_body(io, endian, srid) }
+      })
+    end
+
+    protected def self.read_multi_polygon(io, endian, srid, point : P.class) : MultiPolygon(P) forall P
+      MultiPolygon(P).new(Array(Polygon(P)).new(io.read_bytes(UInt32, endian)) {
+        member_endian = read_endian(io)
+        io.read_bytes(UInt32, member_endian) # member type code
+        read_polygon(io, member_endian, srid, point)
+      })
     end
   end
 
-  struct Point2D < Geography
+  # A `Point2D` represents a PostGIS `POINT` value on a 2-dimensional plane. The
+  # `srid` may be set for `geography` values.
+  struct Point2D < Geometry
     getter x : Float64
     getter y : Float64
     getter srid : UInt32
 
-    def self.from_ewkb(io, endian : IO::ByteFormat) : self
+    def self.read_body(io, endian, srid) : self
       new(
-        srid: io.read_bytes(UInt32, endian),
         x: io.read_bytes(Float64, endian),
         y: io.read_bytes(Float64, endian),
+        srid: srid,
       )
     end
 
@@ -44,47 +114,69 @@ module PostGIS
     end
   end
 
-  struct Point3D < Geography
+  # A `Point3D` represents a PostGIS `POINT` value in 3-dimensional space. The
+  # `srid` may be set for `geography` values.
+  struct Point3D < Geometry
     getter x : Float64
     getter y : Float64
     getter z : Float64
     getter srid : UInt32
 
-    def self.from_ewkb(io, endian : IO::ByteFormat) : self
+    def self.read_body(io, endian, srid) : self
       new(
-        srid: io.read_bytes(UInt32, endian),
         x: io.read_bytes(Float64, endian),
         y: io.read_bytes(Float64, endian),
         z: io.read_bytes(Float64, endian),
+        srid: srid,
       )
     end
 
-    def initialize(@srid, @x, @y, @z)
+    def initialize(@x, @y, @z, @srid = 4326_u32)
     end
   end
 
-  struct Polygon2D < Geography
-    getter sections : Array(Array(Point2D))
+  # An ordered list of points.
+  struct LineString(Point) < Geometry
+    getter points : Array(Point)
 
-    def self.from_ewkb(io, endian) : self
-      srid = endian.decode(UInt32, io)
-
-      sections = Array(Array(Point2D)).new(endian.decode(UInt32, io)) do
-        Array(Point2D).new(endian.decode(UInt32, io)) do
-          Point2D.new(
-            x: endian.decode(Float64, io),
-            y: endian.decode(Float64, io),
-            srid: srid,
-          )
-        end
-      end
-
-      new(sections)
-    end
-
-    def initialize(@sections)
+    def initialize(@points)
     end
   end
+
+  # Rings of points: the first is the exterior ring, the rest are holes. All
+  # polygons must be closed (the first point is equal to the last). For an
+  # unclosed version, use `LineString`.
+  struct Polygon(Point) < Geometry
+    getter rings : Array(Array(Point))
+
+    def initialize(@rings)
+    end
+
+    @[Deprecated("Use `#rings` instead.")]
+    def sections : Array(Array(Point))
+      rings
+    end
+  end
+
+  # A collection of polygons. A MultiPolygon's members are always polygons, so
+  # the only thing that varies is the point type.
+  struct MultiPolygon(Point) < Geometry
+    getter polygons : Array(Polygon(Point))
+
+    def initialize(@polygons)
+    end
+  end
+
+  # `geography` and `geometry` are different types in the PostGIS extension, but
+  # they have an identical interface on the client side.
+  alias Geography = Geometry
+
+  alias LineString2D = LineString(Point2D)
+  alias LineString3D = LineString(Point3D)
+  alias Polygon2D = Polygon(Point2D)
+  alias Polygon3D = Polygon(Point3D)
+  alias MultiPolygon2D = MultiPolygon(Point2D)
+  alias MultiPolygon3D = MultiPolygon(Point3D)
 
   class Error < ::Exception
   end
@@ -95,31 +187,20 @@ module PostGIS
   class MissingExtension < Error
   end
 
-  module Decoders
-    struct GeographyDecoder
-      include PG::Decoders::Decoder
+  struct Decoder
+    include PG::Decoders::Decoder
 
-      getter oids : Array(Int32)
+    getter oids : Array(Int32)
 
-      def initialize(@oids)
-      end
+    def initialize(@oids)
+    end
 
-      def decode(io, bytesize, oid)
-        endian = case endian_byte = io.read_byte
-                 when 0
-                   IO::ByteFormat::BigEndian
-                 when 1
-                   IO::ByteFormat::LittleEndian
-                 else
-                   raise DecodingError.new("Invalid endian byte marker: #{endian_byte.inspect}")
-                 end
+    def decode(io, bytesize, oid)
+      Geometry.from_ewkb(io)
+    end
 
-        Geography.from_ewkb(io, endian)
-      end
-
-      def type
-        Geography
-      end
+    def type
+      Geometry
     end
   end
 end
