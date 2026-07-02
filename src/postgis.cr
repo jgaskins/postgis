@@ -45,7 +45,7 @@ module PostGIS
   # hierarchy.
   abstract struct Geometry
     # Reads a complete (E)WKB geometry, including its leading endian byte.
-    private def self.from_ewkb(io : IO) : Geometry
+    protected def self.from_ewkb(io : IO) : Geometry
       endian = read_endian(io)
       type = io.read_bytes(UInt32, endian)
       flags = TypeFlags.new((type >> 16).to_u16)
@@ -60,6 +60,8 @@ module PostGIS
         flags.z? ? read_polygon(io, endian, srid, Point3D) : read_polygon(io, endian, srid, Point2D)
       in .multi_polygon?
         flags.z? ? read_multi_polygon(io, endian, srid, Point3D) : read_multi_polygon(io, endian, srid, Point2D)
+      in .multi_point?, .multi_line_string?, .geometry_collection?
+        raise DecodingError.new("Decoding #{Kind.new((type & 0xffff).to_u16)} values is not yet supported")
       end
     end
 
