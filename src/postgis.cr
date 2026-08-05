@@ -65,6 +65,10 @@ module PostGIS
       end
     end
 
+    def to_wkt : String
+      String.build { |str| to_wkt str }
+    end
+
     private def self.read_endian(io : IO) : IO::ByteFormat
       case endian_byte = io.read_byte
       when 0
@@ -114,6 +118,10 @@ module PostGIS
 
     def initialize(@x, @y, @srid = 4326_u32)
     end
+
+    def to_wkt(io : IO) : Nil
+      io << "POINT(" << x << ' ' << y << ')'
+    end
   end
 
   # A `Point3D` represents a PostGIS `POINT` value in 3-dimensional space. The
@@ -134,6 +142,10 @@ module PostGIS
     end
 
     def initialize(@x, @y, @z, @srid = 4326_u32)
+    end
+
+    def to_wkt(io : IO) : Nil
+      io << "POINT(" << x << ' ' << y << ' ' << z << ')'
     end
   end
 

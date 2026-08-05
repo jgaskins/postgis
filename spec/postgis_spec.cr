@@ -130,6 +130,20 @@ describe PostGIS do
       y: 2.0,
     )
   end
+
+  it "encodes points" do
+    point = PostGIS::Point2D.new(1.0, 2.0)
+    point.to_wkt.should eq "POINT(1.0 2.0)"
+    TEST_DB.query_one(<<-SQL, point.to_wkt, as: PostGIS::Point2D).should eq point
+      SELECT $1::geography(point)
+    SQL
+
+    point = PostGIS::Point3D.new(1.0, 2.0, 3.0)
+    point.to_wkt.should eq "POINT(1.0 2.0 3.0)"
+    TEST_DB.query_one(<<-SQL, point.to_wkt, as: PostGIS::Point3D).should eq point
+      SELECT $1::geography
+    SQL
+  end
 end
 
 # `geometry` (planar) decodes from the same EWKB as `geography`, but carries no
