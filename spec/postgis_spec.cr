@@ -131,6 +131,30 @@ describe PostGIS do
     )
   end
 
+  it "decodes using the abstract type" do
+    value = TEST_DB.query_one "SELECT 'point(1 2)'::geography", as: PostGIS::Geography
+    value.should eq PostGIS::Point2D.new(x: 1.0, y: 2.0)
+  end
+
+  it "decodes nullable columns" do
+    TEST_DB
+      .query_one("SELECT 'point(1 2)'::geography", as: PostGIS::Point2D?)
+      .should eq PostGIS::Point2D.new(x: 1.0, y: 2.0)
+    TEST_DB.query_one("SELECT NULL::geography", as: PostGIS::Point2D?).should be_nil
+  end
+
+  it "raises when the column is NULL but the type is not nilable" do
+    expect_raises DB::ColumnTypeMismatchError do
+      TEST_DB.query_one "SELECT NULL::geography", as: PostGIS::Point2D
+    end
+  end
+
+  it "raises when the column contains a different geometry type" do
+    expect_raises DB::ColumnTypeMismatchError, /PostGIS::Point2D/ do
+      TEST_DB.query_one "SELECT 'linestring(1 2, 3 4)'::geography", as: PostGIS::Point2D
+    end
+  end
+
   it "encodes points" do
     point = PostGIS::Point2D.new(1.0, 2.0)
     point.to_wkt.should eq "POINT(1.0 2.0)"

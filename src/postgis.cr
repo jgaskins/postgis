@@ -22,30 +22,12 @@ module PostGIS
     GeometryCollection = 7
   end
 
-  def self.register_decoder(db : DB::Database)
-    oids = [] of Int32
-
-    if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geography'", as: Int32)
-      oids << oid
-    else
-      raise MissingExtension.new("No `geography` type available in Postgres. The `postgis` extension might not be installed.")
-    end
-
-    if oid = db.query_one?("SELECT oid::int4 FROM pg_type WHERE typname = 'geometry'", as: Int32)
-      oids << oid
-    else
-      raise MissingExtension.new("No `geometry` type available in Postgres. The `postgis` extension might not be installed.")
-    end
-
-    ::PG::Decoders.register_decoder Decoder.new(oids)
-  end
-
   # The common supertype for everything PostGIS hands us. `geometry` and
   # `geography` can decode from identical EWKB, so they share one
   # hierarchy.
   abstract struct Geometry
     # Reads a complete (E)WKB geometry, including its leading endian byte.
-    protected def self.from_ewkb(io : IO) : Geometry
+    def self.from_ewkb(io : IO) : Geometry
       endian = read_endian(io)
       type = io.read_bytes(UInt32, endian)
       flags = TypeFlags.new((type >> 16).to_u16)
@@ -200,21 +182,14 @@ module PostGIS
 
   class MissingExtension < Error
   end
+end
 
-  struct Decoder
-    include PG::Decoders::Decoder
-
-    getter oids : Array(Int32)
-
-    def initialize(@oids)
-    end
-
-    def decode(io, bytesize, oid)
-      Geometry.from_ewkb(io)
-    end
-
-    def type
-      Geometry
+class PG::ResultSet
+  # Reads a nullable `geometry` or `geography` column as the requested
+  # `PostGIS` type, such as `PostGIS::Point2D?`.
+  def read(type : PostGIS::Geometry?.class)
+    read type do |io|
+      PostGIS::Geometry.from_ewkb(io)
     end
   end
 end
